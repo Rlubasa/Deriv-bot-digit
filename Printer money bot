@@ -1,0 +1,227 @@
+‎<!DOCTYPE html>
+‎<html lang="en">
+‎<head>
+‎<meta charset="utf-8" />
+‎<meta name="viewport" content="width=device-width,initial-scale=1" />
+‎<title>Money Printer Analysis</title>
+‎<style>
+‎  :root { --panel-bg: rgba(0,0,0,0.55); --muted: #ddd; }
+‎  body{
+‎    margin:0; font-family:Arial,Helvetica,sans-serif; color:#fff;
+‎    background: linear-gradient(135deg, red, orange, yellow, green, blue, indigo, violet);
+‎    background-size: 400% 400%; animation: rainbow 10s linear infinite;
+‎    -webkit-font-smoothing:antialiased; text-align:center;
+‎  }
+‎  @keyframes rainbow { 0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%} }
+‎  .wrap{ max-width:420px; margin:36px auto; padding:18px; border-radius:12px; background:var(--panel-bg); box-shadow:0 8px 30px rgba(0,0,0,0.4); }
+‎  h1{ margin:4px 0 12px; font-size:20px; }
+‎  input[type="text"], input[type="number"], select { width:88%; padding:10px 8px; margin:6px 0; border-radius:8px; border: none; font-size:15px; }
+‎  .row{ display:flex; justify-content:center; gap:8px; align-items:center; flex-wrap:wrap; }
+‎  button { padding:10px 16px; border-radius:8px; border:none; font-weight:700; cursor:pointer; }
+‎  .btn-gen { background:#00ff88; color:#000; }
+‎  .btn-reset { background:#ff7a7a; color:#000; }
+‎  #result{ margin-top:14px; font-size:16px; padding:10px; color:#fff; }
+‎  #stats{ margin-top:10px; font-size:15px; color:#ffeb3b; }
+‎  .hint{ font-size:12px; color:var(--muted); margin-top:6px; }
+‎  pre.sequence { background: rgba(255,255,255,0.06); padding:8px; border-radius:8px; margin-top:10px; font-size:14px; overflow-x:auto; color:#fff;}
+‎  label.small{ font-size:13px; color:var(--muted); display:block; margin-top:6px;}
+‎</style>
+‎</head>
+‎<body>
+‎  <div class="wrap">
+‎    <h1>💸 Money Printer Analysis</h1>
+‎
+‎    <input id="token" type="text" placeholder="Enter API Token" />
+‎    <input id="symbol" type="text" placeholder="Enter Symbol (e.g. R_75, R_100)" />
+‎
+‎    <div class="row">
+‎      <select id="tradeType" onchange="onTradeTypeChange()">
+‎        <option value="matches">Matches (digit = selected)</option>
+‎        <option value="differs">Differs (digit ≠ selected)</option>
+‎        <option value="over">Over (digit > selected)</option>
+‎        <option value="under">Under (digit < selected)</option>
+‎        <option value="even">Even</option>
+‎        <option value="odd">Odd</option>
+‎      </select>
+‎
+‎      <input id="digit" type="number" min="0" max="9" placeholder="Digit (0–9)" />
+‎    </div>
+‎
+‎    <div class="row" style="margin-top:8px;">
+‎      <button class="btn-gen" onclick="generateOnce()">Generate</button>
+‎      <button class="btn-reset" onclick="clearState()">Reset</button>
+‎    </div>
+‎
+‎    <div class="hint">Digit box is required for Matches / Differs / Over / Under. It is disabled for Even/Odd.</div>
+‎
+‎    <div id="result">Click <strong>Generate</strong> to fetch the latest 10 ticks and evaluate.</div>
+‎    <div id="stats">Most Appearing: - | Last Appearing (unique): -</div>
+‎    <pre id="sequence" class="sequence">Last 10 digits: -</pre>
+‎  </div>
+‎
+‎<script>
+‎/* Helper: validate symbol/token & UI behaviours */
+‎function onTradeTypeChange(){
+‎  const t = document.getElementById('tradeType').value;
+‎  const digitEl = document.getElementById('digit');
+‎  if(t === 'even' || t === 'odd'){
+‎    digitEl.value = '';
+‎    digitEl.disabled = true;
+‎    digitEl.placeholder = 'Not required for Even/Odd';
+‎  } else {
+‎    digitEl.disabled = false;
+‎    digitEl.placeholder = 'Digit (0–9)';
+‎  }
+‎}
+‎
+‎/* Clear UI state */
+‎function clearState(){
+‎  document.getElementById('result').innerText = 'Click Generate to fetch the latest 10 ticks and evaluate.';
+‎  document.getElementById('stats').innerText = 'Most Appearing: - | Last Appearing (unique): -';
+‎  document.getElementById('sequence').innerText = 'Last 10 digits: -';
+‎}
+‎
+‎/* Main: fetch 10 latest ticks history only once per click */
+‎function generateOnce(){
+‎  const token = document.getElementById('token').value.trim();
+‎  const symbol = document.getElementById('symbol').value.trim().toUpperCase();
+‎  const tradeType = document.getElementById('tradeType').value;
+‎  const digitInput = document.getElementById('digit').value;
+‎  const needDigit = (tradeType === 'matches' || tradeType === 'differs' || tradeType === 'over' || tradeType === 'under');
+‎
+‎  if(!token || !symbol){
+‎    alert('Enter both API token and symbol (e.g. R_75).');
+‎    return;
+‎  }
+‎  if(needDigit){
+‎    if(digitInput === '' || isNaN(digitInput) || digitInput < 0 || digitInput > 9){
+‎      alert('Enter a digit 0–9 for the selected trade type.');
+‎      return;
+‎    }
+‎  }
+‎
+‎  // create websocket, request ticks_history count=10, then close
+‎  const ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=1089');
+‎
+‎  ws.onopen = () => {
+‎    // authorize then request the latest 10 ticks
+‎    ws.send(JSON.stringify({ authorize: token }));
+‎    ws.send(JSON.stringify({ ticks_history: symbol, count: 10, end: 'latest' }));
+‎  };
+‎
+‎  ws.onmessage = (ev) => {
+‎    try {
+‎      const data = JSON.parse(ev.data);
+‎
+‎      if(data.error){
+‎        document.getElementById('result').innerText = 'API Error: ' + JSON.stringify(data.error);
+‎        ws.close();
+‎        return;
+‎      }
+‎
+‎      if(data.history && Array.isArray(data.history.prices) && data.history.prices.length > 0){
+‎        // Deriv returns prices array — we assume index 0 is the latest tick (most recent).
+‎        const prices = data.history.prices.slice(0, 10); // may be <=10
+‎        // Convert to last digits (0-9)
+‎        const digits = prices.map(p => {
+‎          const s = String(p);
+‎          return parseInt(s.charAt(s.length - 1));
+‎        });
+‎
+‎        // digits[0] is latest tick's last digit
+‎        const latestDigit = digits[0];
+‎
+‎        // Build frequency counts
+‎        const counts = {};
+‎        digits.forEach(d => counts[d] = (counts[d] || 0) + 1);
+‎
+‎        // Determine Most Appearing: max count; if tie choose the one that appeared most recently among ties
+‎        let maxCount = 0;
+‎        for(const d in counts) if(counts[d] > maxCount) maxCount = counts[d];
+‎
+‎        // candidates with maxCount
+‎        const candidates = Object.keys(counts).filter(k => counts[k] === maxCount).map(x => parseInt(x));
+‎
+‎        // choose most recent candidate: find smallest index in digits array
+‎        let mostAppearing = candidates[0];
+‎        let bestIdx = digits.length;
+‎        candidates.forEach(c => {
+‎          const idx = digits.indexOf(c); // indexOf returns first occurrence (latest if index0 latest)
+‎          if(idx !== -1 && idx < bestIdx){
+‎            bestIdx = idx;
+‎            mostAppearing = c;
+‎          }
+‎        });
+‎
+‎        // Determine Last Appearing (unique -> count === 1). If multiple, pick the one that appeared most recently.
+‎        const uniques = Object.keys(counts).filter(k => counts[k] === 1).map(x => parseInt(x));
+‎        let lastAppearing = null;
+‎        if(uniques.length > 0){
+‎          let bestUIdx = digits.length;
+‎          uniques.forEach(u => {
+‎            const idx = digits.indexOf(u);
+‎            if(idx !== -1 && idx < bestUIdx){
+‎              bestUIdx = idx;
+‎              lastAppearing = u;
+‎            }
+‎          });
+‎        } else {
+‎          // fallback: no uniques -> show latest digit
+‎          lastAppearing = latestDigit;
+‎        }
+‎
+‎        // Format sequence for display: show most recent -> oldest
+‎        const seqStr = digits.map((d,i) => `${d}${i===0? ' (latest)':''}`).join('  ');
+‎
+‎        // Check trade type vs latestDigit
+‎        let tradeResult = '';
+‎        const chosenDigit = needDigit ? parseInt(digitInput) : null;
+‎        switch(tradeType){
+‎          case 'matches':
+‎            tradeResult = (latestDigit === chosenDigit) ? '✅ Matches' : '❌ No Match';
+‎            break;
+‎          case 'differs':
+‎            tradeResult = (latestDigit !== chosenDigit) ? '✅ Differs' : '❌ Same';
+‎            break;
+‎          case 'over':
+‎            tradeResult = (latestDigit > chosenDigit) ? '✅ Over' : '❌ Not Over';
+‎            break;
+‎          case 'under':
+‎            tradeResult = (latestDigit < chosenDigit) ? '✅ Under' : '❌ Not Under';
+‎            break;
+‎          case 'even':
+‎            tradeResult = (latestDigit % 2 === 0) ? '✅ Even' : '❌ Odd';
+‎            break;
+‎          case 'odd':
+‎            tradeResult = (latestDigit % 2 !== 0) ? '✅ Odd' : '❌ Even';
+‎            break;
+‎          default:
+‎            tradeResult = 'Unknown trade type';
+‎        }
+‎
+‎        // Update UI
+‎        document.getElementById('result').innerHTML =
+‎          `Latest digit: <strong>${latestDigit}</strong> — ${tradeResult}`;
+‎        document.getElementById('stats').innerText =
+‎          `Most Appearing (last 10): ${mostAppearing} (×${maxCount})  |  Last Appearing (unique-most-recent): ${lastAppearing}`;
+‎        document.getElementById('sequence').innerText = `Last ${digits.length} digits (most recent → oldest):\n` + seqStr;
+‎
+‎        ws.close();
+‎      }
+‎    } catch(err){
+‎      document.getElementById('result').innerText = 'Parse error: ' + err.message;
+‎      ws.close();
+‎    }
+‎  };
+‎
+‎  ws.onerror = (e) => {
+‎    document.getElementById('result').innerText = 'WebSocket error: ' + (e.message || 'connection error');
+‎  };
+‎}
+‎
+‎/* initialize UI state */
+‎onTradeTypeChange();
+‎</script>
+‎</body>
+‎</html>
+‎
